@@ -2,20 +2,21 @@
 #define SHANHJ_JSON_H
 
 #include <cstring>
+#include <iostream>
 #include <list>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#define skip_space(array)                   \
-    while (*array == ' ' || *array == '\n') \
-    array++
-
 namespace Shanhj_Json
 {
     using namespace std;
+
     typedef unsigned long ulong;
+
+    class JsonArray;
+    class JsonObject;
 
     enum value_type
     {
@@ -24,11 +25,9 @@ namespace Shanhj_Json
         TYPE_DOUBLE,
         TYPE_BOOLEAN,
         TYPE_OBJECT,
-        TYPE_ARRAY
+        TYPE_ARRAY,
+        TYPE_NULL
     };
-
-    class JsonArray;
-    class JsonObject;
 
     class JsonObject
     {
@@ -58,9 +57,10 @@ namespace Shanhj_Json
 
     private:
         // 记录键值为key的元素在哪个vector中的什么位置
+        // 如果是bool类型，则pair的第二个值记录true(1)或false(0)
+        // 如果是null，则pair的第二个值忽略
         map<string, pair<value_type, ulong>> position;
         vector<string> v_string;
-        vector<bool> v_boolean;
         vector<int64_t> v_int;
         vector<double> v_double;
         vector<JsonObject> v_object;
@@ -98,14 +98,193 @@ namespace Shanhj_Json
 
     private:
         // 记录下标为index的元素是什么类型，以及在vector中的下标
+        // 如果是bool类型，则第二个值记录true(1)或false(0)
+        // 如果是null，则第二个值忽略
         list<pair<value_type, ulong>> position;
         vector<string> v_string;
-        vector<bool> v_boolean;
         vector<int64_t> v_int;
         vector<double> v_double;
         vector<JsonObject> v_object;
         vector<JsonArray> v_array;
     };
+    // 跳过空格和换行符
+    void skip_space(char *&array);
+
+    // 通过第一个字节的内容返回非ascii字符的utf-8编码的长度
+    // 如果是ascii编码，则返回0
+    uint8_t get_utf8_len(char first_c);
+
+    // 返回出错位置的行和列
+    // begin为json序列开始的位置
+    string error_position(char *begin, char *error_pos);
+
+    // 获取一个字符串，遇到"停止，如果合法返回true
+    // 自动处理转义字符，结束后array将指向"的后一个位置
+    bool get_binary_from_string(char *&array, string &result);
+
+    // 将二进制数据转成文本，特殊字符进行转义
+    // 如果转换的内容不是utf-8格式，返回空字符串
+    string binary_to_string(const string &binary);
+}
+
+void Shanhj_Json::skip_space(char *&array)
+{
+    while (*array == ' ' || *array == '\n')
+        array++;
+}
+
+uint8_t Shanhj_Json::get_utf8_len(char first_c)
+{
+    uint8_t len = 0;
+    while (first_c & 0x80)
+    {
+        len++;
+        first_c <<= 1;
+    }
+    return len;
+}
+
+std::string Shanhj_Json::error_position(char *begin, char *error_pos)
+{
+    ulong line = 1, column = 0;
+    while (begin <= error_pos)
+    {
+        auto len = get_utf8_len(*begin);
+        if (len == -1)
+        {
+            return "not utf-8 text";
+        }
+        else if (len == 0) // ASCII码
+        {
+            if (*begin == '\n')
+            {
+                line++;
+                column = 0;
+            }
+            else
+                column++;
+            begin++;
+        }
+        else // 非ASCII码
+        {
+            column++;
+            begin += len;
+        }
+    }
+    return "lines:" + to_string(line) + ",colum:" + to_string(column);
+}
+
+bool Shanhj_Json::get_binary_from_string(char *&array, string &result)
+{
+    while (*array != '\"')
+    {
+        auto len = get_utf8_len(*array);
+        if (len == -1)
+            return false;
+        else if (len == 0) // ASCII码
+        {
+            if (*array == '\\') // 转义字符
+            {
+                array++;
+                switch (*array)
+                {
+                case 'n':
+                    result += '\n';
+                    break;
+                case '\"':
+                    result += '\"';
+                    break;
+                case '\\':
+                    result += '\\';
+                    break;
+                case 'b':
+                    result += '\b';
+                    break;
+                case 'f':
+                    result += '\f';
+                    break;
+                case 't':
+                    result += '\t';
+                    break;
+                case 'r':
+                    result += '\r';
+                    break;
+                case '/':
+                    result += '/';
+                    break;
+                default: // 不合法的转义字符
+                    return false;
+                    break;
+                }
+            }
+            else
+                result += *array;
+        }
+        else // 非ASCII码
+        {
+            while (--len)
+            {
+                result += *array;
+                array++;
+            }
+            result += *array;
+        }
+        array++;
+    }
+    array++;
+    return true;
+}
+
+std::string Shanhj_Json::binary_to_string(const string &binary)
+{
+    string result;
+    for (int i = 0; i < binary.size(); i++)
+    {
+        auto len = get_utf8_len(binary[i]);
+        if (len == 0) // ASCII字符
+        {
+            switch (binary[i])
+            {
+            case '\n':
+                result += "\\n";
+                break;
+            case '\r':
+                result += "\\r";
+                break;
+            case '\t':
+                result += "\\t";
+                break;
+            case '\f':
+                result += "\\f";
+                break;
+            case '\b':
+                result += "\\b";
+                break;
+            case '\\':
+                result += "\\\\";
+                break;
+            case '/':
+                result += "\\/";
+                break;
+            case '\"':
+                result += "\\\"";
+                break;
+            default:
+                result += binary[i];
+                break;
+            }
+        }
+        else // 非ASCII字符
+        {
+            while (--len)
+            {
+                result += binary[i];
+                i++;
+            }
+            result += binary[i];
+        }
+    }
+    return result;
 }
 
 void Shanhj_Json::JsonObject::insert(const string &key, const string &value)
@@ -142,15 +321,9 @@ void Shanhj_Json::JsonObject::insert(const string &key, bool value)
 {
     // 已经存在相同键值的变量，并且是同一类型的
     if (position.count(key) && position[key].first == TYPE_BOOLEAN)
-    {
-        v_boolean[position[key].second] = value;
-    }
+        position[key].second = value;
     else
-    { // 不存在相同键值的变量，或者存在相同键值但类型不同的变量，插入新的值
-        // 旧的键值对仍然留在vector里，但不再使用
-        position[key] = {TYPE_BOOLEAN, v_boolean.size()};
-        v_boolean.push_back(value);
-    }
+        position[key] = {TYPE_BOOLEAN, value};
 }
 
 void Shanhj_Json::JsonObject::insert(const string &key, int value)
@@ -242,7 +415,7 @@ bool Shanhj_Json::JsonObject::get_boolean(const string &key, bool &result)
     if (!position.count(key)) return false; // 不存在该键值
     auto pos = position[key];
     if (pos.first != TYPE_BOOLEAN) return false; // 不存在该类型的键值对
-    result = v_boolean[pos.second];
+    result = pos.second;
     return true;
 }
 
@@ -286,7 +459,6 @@ void Shanhj_Json::JsonObject::clear()
 {
     position.clear();
     v_array.clear();
-    v_boolean.clear();
     v_double.clear();
     v_int.clear();
     v_object.clear();
@@ -297,57 +469,63 @@ std::string Shanhj_Json::JsonObject::output_to_string(long indent)
 {
     string result;
     result += "{";
-    if (indent >= 0) result += '\n';
-    bool flag = 0;
-    for (auto entry : position)
+    if (position.size())
     {
-        if (!flag)
-            flag = 1;
-        else
+        if (indent >= 0) result += '\n';
+        bool flag = 0;
+        for (auto entry : position)
         {
-            result += ',';
-            if (indent >= 0) result += '\n';
+            if (!flag)
+                flag = 1;
+            else
+            {
+                result += ',';
+                if (indent >= 0) result += '\n';
+            }
+            if (indent >= 0)
+            {
+                for (int i = 0; i < indent + 4; i++) // 缩进
+                    result += ' ';
+            }
+            result += '\"';
+            result += binary_to_string(entry.first);
+            result += "\":";
+            if (indent >= 0) result += ' ';
+            switch (entry.second.first)
+            {
+            case TYPE_STRING:
+                result += '\"';
+                result += binary_to_string(v_string[entry.second.second]);
+                result += '\"';
+                break;
+            case TYPE_BOOLEAN:
+                result += entry.second.second ? "true" : "false";
+                break;
+            case TYPE_INT:
+                result += to_string(v_int[entry.second.second]);
+                break;
+            case TYPE_DOUBLE:
+                result += to_string(v_double[entry.second.second]);
+                break;
+            case TYPE_OBJECT:
+                result += v_object[entry.second.second].output_to_string(indent >= 0 ? indent + 4 : -1);
+                break;
+            case TYPE_ARRAY:
+                result += v_array[entry.second.second].output_to_string(indent >= 0 ? indent + 4 : -1);
+                break;
+            case TYPE_NULL:
+                result += "null";
+                break;
+            default:
+                break;
+            }
         }
         if (indent >= 0)
         {
-            for (int i = 0; i < indent + 4; i++) // 缩进
+            result += '\n';
+            for (int i = 0; i < indent; i++)
                 result += ' ';
         }
-        result += '\"';
-        result += entry.first;
-        result += "\":";
-        if (indent >= 0) result += ' ';
-        switch (entry.second.first)
-        {
-        case TYPE_STRING:
-            result += '\"';
-            result += v_string[entry.second.second];
-            result += '\"';
-            break;
-        case TYPE_BOOLEAN:
-            result += v_boolean[entry.second.second] ? "true" : "false";
-            break;
-        case TYPE_INT:
-            result += to_string(v_int[entry.second.second]);
-            break;
-        case TYPE_DOUBLE:
-            result += to_string(v_double[entry.second.second]);
-            break;
-        case TYPE_OBJECT:
-            result += v_object[entry.second.second].output_to_string(indent >= 0 ? indent + 4 : -1);
-            break;
-        case TYPE_ARRAY:
-            result += v_array[entry.second.second].output_to_string(indent >= 0 ? indent + 4 : -1);
-            break;
-        default:
-            break;
-        }
-    }
-    if (indent >= 0)
-    {
-        result += '\n';
-        for (int i = 0; i < indent; i++)
-            result += ' ';
     }
     result += "}";
     return result;
@@ -355,6 +533,7 @@ std::string Shanhj_Json::JsonObject::output_to_string(long indent)
 
 char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
 {
+    ulong value_order = 0;
     clear();
     skip_space(array);
     if (*array != '{')
@@ -368,17 +547,17 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
         skip_space(array);
         if (*array != '\"')
         {
+            if (*array == '}' && value_order == 0) break;
             result = false;
             return array;
         }
         array++;
-        string key;
-        while (*array != '\"')
+        string key; // 获取键值
+        if (!get_binary_from_string(array, key))
         {
-            key += *array;
-            array++;
+            result = false;
+            return array;
         }
-        array++;
         skip_space(array);
         if (*array != ':')
         {
@@ -387,17 +566,17 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
         }
         array++;
         skip_space(array);
+        // 获取值
         if (*array == '\"') // 字符串类型
         {
             array++;
             string str;
-            while (*array != '\"')
+            if (!get_binary_from_string(array, str))
             {
-                str += *array;
-                array++;
+                result = false;
+                return array;
             }
             insert(key, str);
-            array++;
         }
         else if (*array == 't') // 布尔类型，true
         {
@@ -427,13 +606,18 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
             }
             array += 5;
         }
-        else if (*array >= '0' && *array <= '9') // 数字类型
+        else if ((*array >= '0' && *array <= '9') || *array == '-') // 数字类型
         {
             string num;
-            if (*array == 0) // 0开头
+            if (*array == '-')
+            {
+                num += '-';
+                array++;
+            }
+            if (*array == '0') // 0开头
             {
                 array++;
-                if (*array == ' ')
+                if (*array != '.' && (*array < '0' || *array > '9'))
                     insert(key, 0);
                 else if (*array == '.')
                 {
@@ -454,7 +638,7 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
                     insert(key, stod(num));
                 }
             }
-            else
+            else if (*array >= '1' && *array <= '9') // 1-9开头
             {
                 ulong dot_cnt = 0; // 统计小数点个数
                 num += *array;
@@ -474,6 +658,11 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
                     insert(key, stod(num));
                 else
                     insert(key, stoll(num));
+            }
+            else // 非数字开头，错误
+            {
+                result = false;
+                return array;
             }
         }
         else if (*array == '{') // json对象
@@ -502,11 +691,28 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
                 return array;
             }
         }
+        else if (*array == 'n') // null
+        {
+            char tmp[5];
+            memcpy(tmp, array, 4);
+            tmp[4] = 0;
+            if (strcmp(tmp, "null") == 0)
+            {
+                position[key] = {TYPE_NULL, 0};
+            }
+            else
+            {
+                result = false;
+                return array;
+            }
+            array += 4;
+        }
         else // 格式错误
         {
             result = false;
             return array;
         }
+        value_order++;
         skip_space(array);
         if (*array == '}')
             break;
@@ -539,8 +745,7 @@ void Shanhj_Json::JsonArray::insert(const char *value)
 
 void Shanhj_Json::JsonArray::insert(bool value)
 {
-    position.push_back({TYPE_BOOLEAN, v_boolean.size()});
-    v_boolean.push_back(value);
+    position.push_back({TYPE_BOOLEAN, value});
 }
 void Shanhj_Json::JsonArray::insert(int value)
 {
@@ -586,7 +791,7 @@ bool Shanhj_Json::JsonArray::get_boolean(ulong index, bool &result)
     while (index--)
         iter++;
     if (iter->first != TYPE_BOOLEAN) return false;
-    result = v_boolean[iter->second];
+    result = iter->second;
     return true;
 }
 bool Shanhj_Json::JsonArray::get_int(ulong index, int64_t &result)
@@ -635,58 +840,64 @@ std::string Shanhj_Json::JsonArray::output_to_string(long indent)
 {
     string result;
     result += '[';
-    if (indent >= 0)
+    if (position.size())
     {
-        result += '\n';
-        for (int i = 0; i < indent + 4; i++) // 缩进
-            result += ' ';
-    }
-    bool flag = 0;
-    for (auto entry : position)
-    {
-        if (!flag)
-            flag = 1;
-        else
+        if (indent >= 0)
         {
-            result += ',';
-            if (indent >= 0)
+            result += '\n';
+            for (int i = 0; i < indent + 4; i++) // 缩进
+                result += ' ';
+        }
+        bool flag = 0;
+        for (auto entry : position)
+        {
+            if (!flag)
+                flag = 1;
+            else
             {
-                result += '\n';
-                for (int i = 0; i < indent + 4; i++) // 缩进
-                    result += ' ';
+                result += ',';
+                if (indent >= 0)
+                {
+                    result += '\n';
+                    for (int i = 0; i < indent + 4; i++) // 缩进
+                        result += ' ';
+                }
+            }
+            switch (entry.first)
+            {
+            case TYPE_STRING:
+                result += '\"';
+                result += binary_to_string(v_string[entry.second]);
+                result += '\"';
+                break;
+            case TYPE_BOOLEAN:
+                result += entry.second ? "true" : "false";
+                break;
+            case TYPE_INT:
+                result += to_string(v_int[entry.second]);
+                break;
+            case TYPE_DOUBLE:
+                result += to_string(v_double[entry.second]);
+                break;
+            case TYPE_OBJECT:
+                result += v_object[entry.second].output_to_string(indent + 4);
+                break;
+            case TYPE_ARRAY:
+                result += v_array[entry.second].output_to_string(indent + 4);
+                break;
+            case TYPE_NULL:
+                result += "null";
+                break;
+            default:
+                break;
             }
         }
-        switch (entry.first)
+        if (indent >= 0)
         {
-        case TYPE_STRING:
-            result += '\"';
-            result += v_string[entry.second];
-            result += '\"';
-            break;
-        case TYPE_BOOLEAN:
-            result += v_boolean[entry.second] ? "true" : "false";
-            break;
-        case TYPE_INT:
-            result += to_string(v_int[entry.second]);
-            break;
-        case TYPE_DOUBLE:
-            result += to_string(v_double[entry.second]);
-            break;
-        case TYPE_OBJECT:
-            result += v_object[entry.second].output_to_string(indent + 4);
-            break;
-        case TYPE_ARRAY:
-            result += v_array[entry.second].output_to_string(indent + 4);
-            break;
-        default:
-            break;
+            result += '\n';
+            for (int i = 0; i < indent; i++)
+                result += ' ';
         }
-    }
-    if (indent >= 0)
-    {
-        result += '\n';
-        for (int i = 0; i < indent; i++)
-            result += ' ';
     }
     result += "]";
     return result;
@@ -696,7 +907,6 @@ void Shanhj_Json::JsonArray::clear()
 {
     position.clear();
     v_array.clear();
-    v_boolean.clear();
     v_double.clear();
     v_int.clear();
     v_object.clear();
@@ -705,6 +915,7 @@ void Shanhj_Json::JsonArray::clear()
 
 char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
 {
+    ulong value_order = 0;
     clear();
     skip_space(array);
     if (*array != '[')
@@ -720,13 +931,12 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
         {
             array++;
             string str;
-            while (*array != '\"')
+            if (!get_binary_from_string(array, str))
             {
-                str += *array;
-                array++;
+                result = false;
+                return array;
             }
             insert(str);
-            array++;
         }
         else if (*array == 't') // 布尔类型，true
         {
@@ -756,13 +966,18 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
             }
             array += 5;
         }
-        else if (*array >= '0' && *array <= '9') // 数字类型
+        else if ((*array >= '0' && *array <= '9') || *array == '-') // 数字类型
         {
             string num;
-            if (*array == 0) // 0开头
+            if (*array == '-')
+            {
+                num += '-';
+                array++;
+            }
+            if (*array == '0') // 0开头
             {
                 array++;
-                if (*array == ' ')
+                if (*array != '.' && (*array < '0' || *array > '9'))
                     insert(0);
                 else if (*array == '.')
                 {
@@ -783,7 +998,7 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
                     insert(stod(num));
                 }
             }
-            else
+            else if (*array >= '1' && *array <= '9')
             {
                 ulong dot_cnt = 0; // 统计小数点个数
                 num += *array;
@@ -803,6 +1018,11 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
                     insert(stod(num));
                 else
                     insert(stoll(num));
+            }
+            else
+            {
+                result = false;
+                return array;
             }
         }
         else if (*array == '{') // json对象
@@ -831,12 +1051,31 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
                 return array;
             }
         }
+        else if (*array == 'n') // null
+        {
+            char tmp[5];
+            memcpy(tmp, array, 4);
+            tmp[4] = 0;
+            if (strcmp(tmp, "null") == 0)
+            {
+                position.push_back({TYPE_NULL, 0});
+            }
+            else
+            {
+                result = false;
+                return array;
+            }
+            array += 4;
+        }
+        else if (*array == ']' && value_order == 0)
+            break;
         else // 格式错误
         {
             result = false;
             return array;
         }
         skip_space(array);
+        value_order++;
         if (*array == ']')
             break;
         if (*array == ',')
@@ -866,7 +1105,5 @@ bool Shanhj_Json::JsonArray::remove(ulong index)
     position.erase(iter);
     return true;
 }
-
-#undef skip_space
 
 #endif
