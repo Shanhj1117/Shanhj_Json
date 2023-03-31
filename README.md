@@ -67,7 +67,7 @@ int main()
 {
     "age": 21,
     "favorite game role": {
-        "birthday": "6/21",
+        "birthday": "6\/21",
         "name": "Yoimiya",
         "sex": false
     },
@@ -146,7 +146,7 @@ using namespace Shanhj_Json;
 
 int main()
 {
-    FILE *file = fopen("test.json", "r");
+    FILE *file = fopen("test3.json", "r");
     char buff[4096];
     int len = fread(buff, 1, 4096, file);
     if (len <= 0) return 0;
@@ -154,20 +154,39 @@ int main()
     bool res;
     obj.parser_from_array(buff, res);
     if (res)
-        cout << obj.output_to_string() << endl;
+    {
+        string value;
+        if (obj.get_string("name", value))
+            cout << "name:" << value << endl;
+        else
+            cout << "name:null" << endl;
+
+        int64_t age;
+        if (obj.get_int("age", age))
+            cout << "age:" << age << endl;
+        else
+            cout << "age:null" << endl;
+
+        JsonObject gamerole;
+        if (obj.get_object("favorite game role", gamerole))
+            cout << "favorite game role:"
+                 << gamerole.output_to_string() << endl;
+        else
+            cout << "favorite game role:null" << endl;
+
+        JsonArray games;
+        if (obj.get_array("games played", games))
+            cout << "games played:" << games.output_to_string() << endl;
+        else
+            cout << "games played:null" << endl;
+    }
     return 0;
 }
 ```
 
-test.json文件内容
+test3.json文件内容
 
-``` {.line-numbers}
-{"age":21,"favorite game role":{"birthday":"6/21","name":"Yoimiya","sex":false},"games played":["Naraka","Genshine Impact"],"height":173.100000,"name":"Shanhj","programLanguage":["CPP","C","Java"],"sex":true}
-```
-
-程序输出：
-
-```json {.line-numbers}
+```json
 {
     "age": 21,
     "favorite game role": {
@@ -190,6 +209,22 @@ test.json文件内容
 }
 ```
 
+程序输出：
+
+```
+name:Shanhj
+age:21
+favorite game role:{
+    "birthday": "6\/21",
+    "name": "Yoimiya",
+    "sex": false
+}
+games played:[
+    "Naraka",
+    "Genshine Impact"
+]
+```
+
 # Demo4-解析json数组
 
 test.json文件内容
@@ -199,7 +234,7 @@ test.json文件内容
 ```
 
 ```cpp
-#include "Shanhj_Json.hpp"
+#include "../Shanhj_Json.hpp"
 #include <cstdio>
 #include <iostream>
 
@@ -210,26 +245,46 @@ char buff[4096];
 
 int main()
 {
-    FILE *file = fopen("test.json", "r");
+    FILE *file = fopen("test4.json", "r");
     auto len = fread(buff, 1, 4096, file);
     if (len <= 0) return 0;
     JsonArray arr;
     bool res;
     auto end_pos = arr.parser_from_array(buff, res);
     if (res)
+    {
+        int64_t num;
+        if (arr.get_int(0, num))
+            cout << "index0:" << num << endl;
+
+        bool flag;
+        if (arr.get_boolean(1, flag))
+            cout << "index1:" << (flag ? "true" : "false") << endl;
+
+        string text;
+        if (arr.get_string(2, text))
+            cout << "index2:" << text << endl;
+
+        if (arr.get_boolean(3, flag))
+            cout << "index3:" << (flag ? "true" : "false") << endl;
+
+        arr.remove(1);
+
         cout << arr.output_to_string() << endl;
-    else
-        cout << "error:" << error_position(buff, end_pos) << endl;
+    }
     return 0;
 }
 ```
 
-带缩进的输出如下：
+输出如下：
 
-```json
+```
+index0:114514
+index1:true  
+index2:1919810
+index3:false
 [
     114514,
-    true,
     "1919810",
     false,
     null
