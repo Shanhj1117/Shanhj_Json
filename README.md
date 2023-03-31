@@ -152,7 +152,7 @@ int main()
     if (len <= 0) return 0;
     JsonObject obj;
     bool res;
-    obj.parser_from_array(buff, res);
+    obj.parser_from_array(buff, buff + len, res);
     if (res)
     {
         string value;
@@ -250,7 +250,7 @@ int main()
     if (len <= 0) return 0;
     JsonArray arr;
     bool res;
-    auto end_pos = arr.parser_from_array(buff, res);
+    auto end_pos = arr.parser_from_array(buff, buff + len, res);
     if (res)
     {
         int64_t num;
@@ -322,7 +322,7 @@ int main()
     if (len <= 0) return 0;
     JsonObject obj;
     bool res;
-    auto end_pos = obj.parser_from_array(buff, res);
+    auto end_pos = obj.parser_from_array(buff, buff + len, res);
     if (res)
         cout << "pass" << endl;
     else

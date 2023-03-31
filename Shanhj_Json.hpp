@@ -11,6 +11,13 @@
 
 namespace Shanhj_Json
 {
+#define parser_array_check(array_begin, array_end) \
+    if (array_begin >= array_end)                  \
+    {                                              \
+        result = false;                            \
+        return array_begin;                        \
+    }
+
     using namespace std;
 
     typedef unsigned long ulong;
@@ -53,7 +60,7 @@ namespace Shanhj_Json
         // 默认有4个空格的缩进，如果传入的indent<0则无缩进
         string output_to_string(long indent = 0);
         // 从字符串数组中构造json对象，返回构造结束时的指针位置，result存储构造结果，为false则表示解析出错
-        char *parser_from_array(char *array, bool &result);
+        char *parser_from_array(char *array_begin, char *array_end, bool &result);
 
     private:
         // 记录键值为key的元素在哪个vector中的什么位置
@@ -90,7 +97,7 @@ namespace Shanhj_Json
         // 默认有4个空格的缩进，如果传入的indent<0则无缩进
         string output_to_string(long indent = 0);
         // 从字符串数组中构造json数组，返回构造结束时的指针位置，result存储构造结果，为false则表示解析出错
-        char *parser_from_array(char *array, bool &result);
+        char *parser_from_array(char *array_begin, char *array_end, bool &result);
         // 获取元素个数
         ulong size();
         // 移除第index个元素，移除后index之后的元素下标减1
@@ -107,12 +114,12 @@ namespace Shanhj_Json
         vector<JsonObject> v_object;
         vector<JsonArray> v_array;
     };
-    // 跳过空格和换行符
-    void skip_space(char *&array);
+    // 跳过空格和换行符，如果array到达array_end则返回false
+    inline bool skip_space(char *&array, char *array_end);
 
     // 通过第一个字节的内容返回非ascii字符的utf-8编码的长度
     // 如果是ascii编码，则返回0
-    uint8_t get_utf8_len(char first_c);
+    inline uint8_t get_utf8_len(char first_c);
 
     // 返回出错位置的行和列
     // begin为json序列开始的位置
@@ -120,17 +127,18 @@ namespace Shanhj_Json
 
     // 从带有转义字符的文本中获取一个二进制字符串，遇到 " 停止，如果合法返回true
     // 自动处理转义字符，结束后array将指向 " 的后一个位置
-    bool get_binary_from_text(char *&array, string &result);
+    bool get_binary_from_text(char *&array, char *array_end, string &result);
 
     // 将二进制字符串转成文本，特殊字符进行转义
     // 如果转换的内容不是utf-8格式，返回空字符串
     string binary_to_text(const string &binary);
 }
 
-void Shanhj_Json::skip_space(char *&array)
+bool Shanhj_Json::skip_space(char *&array, char *array_end)
 {
-    while (*array == ' ' || *array == '\n')
+    while (array < array_end && (*array == ' ' || *array == '\n'))
         array++;
+    return array < array_end;
 }
 
 uint8_t Shanhj_Json::get_utf8_len(char first_c)
@@ -174,8 +182,9 @@ std::string Shanhj_Json::error_position(char *begin, char *error_pos)
     return "lines:" + to_string(line) + ",colum:" + to_string(column);
 }
 
-bool Shanhj_Json::get_binary_from_text(char *&array, string &result)
+bool Shanhj_Json::get_binary_from_text(char *&array, char *array_end, string &result)
 {
+    if (array >= array_end) return false;
     while (*array != '\"')
     {
         auto len = get_utf8_len(*array);
@@ -186,6 +195,7 @@ bool Shanhj_Json::get_binary_from_text(char *&array, string &result)
             if (*array == '\\') // 转义字符
             {
                 array++;
+                if (array >= array_end) return false;
                 switch (*array)
                 {
                 case 'n':
@@ -222,7 +232,7 @@ bool Shanhj_Json::get_binary_from_text(char *&array, string &result)
         }
         else // 非ASCII码
         {
-            while (--len)
+            while (array < array_end && --len)
             {
                 result += *array;
                 array++;
@@ -230,6 +240,7 @@ bool Shanhj_Json::get_binary_from_text(char *&array, string &result)
             result += *array;
         }
         array++;
+        if (array >= array_end) return false;
     }
     array++;
     return true;
@@ -531,128 +542,157 @@ std::string Shanhj_Json::JsonObject::output_to_string(long indent)
     return result;
 }
 
-char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
+char *Shanhj_Json::JsonObject::parser_from_array(char *array_begin, char *array_end, bool &result)
 {
+    parser_array_check(array_begin, array_end);
     ulong value_order = 0;
     clear();
-    skip_space(array);
-    if (*array != '{')
+    if (!skip_space(array_begin, array_end))
     {
         result = false;
-        return array;
+        return array_begin;
     }
-    array++;
-    while (1)
+    if (*array_begin != '{')
     {
-        skip_space(array);
-        if (*array != '\"')
+        result = false;
+        return array_begin;
+    }
+    array_begin++;
+    parser_array_check(array_begin, array_end);
+    while (array_begin < array_end)
+    {
+        if (!skip_space(array_begin, array_end))
         {
-            if (*array == '}' && value_order == 0) break;
             result = false;
-            return array;
+            return array_begin;
         }
-        array++;
+        if (*array_begin != '\"')
+        {
+            if (*array_begin == '}' && value_order == 0) break;
+            result = false;
+            return array_begin;
+        }
+        array_begin++;
+        parser_array_check(array_begin, array_end);
         string key; // 获取键值
-        if (!get_binary_from_text(array, key))
+        if (!get_binary_from_text(array_begin, array_end, key))
         {
             result = false;
-            return array;
+            return array_begin;
         }
-        skip_space(array);
-        if (*array != ':')
+        if (!skip_space(array_begin, array_end))
         {
             result = false;
-            return array;
+            return array_begin;
         }
-        array++;
-        skip_space(array);
+        if (*array_begin != ':')
+        {
+            result = false;
+            return array_begin;
+        }
+        array_begin++;
+        parser_array_check(array_begin, array_end);
+        if (!skip_space(array_begin, array_end))
+        {
+            result = false;
+            return array_begin;
+        }
         // 获取值
-        if (*array == '\"') // 字符串类型
+        if (*array_begin == '\"') // 字符串类型
         {
-            array++;
+            array_begin++;
+            parser_array_check(array_begin, array_end);
             string str;
-            if (!get_binary_from_text(array, str))
+            if (!get_binary_from_text(array_begin, array_end, str))
             {
                 result = false;
-                return array;
+                return array_begin;
             }
             insert(key, str);
         }
-        else if (*array == 't') // 布尔类型，true
+        else if (*array_begin == 't') // 布尔类型，true
         {
             char tmp[5];
-            memcpy(tmp, array, 4);
+            memcpy(tmp, array_begin, 4);
             tmp[4] = 0;
             if (strcmp(tmp, "true") == 0)
                 insert(key, true);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 4;
+            array_begin += 4;
+            parser_array_check(array_begin, array_end);
         }
-        else if (*array == 'f') // 布尔类型，false
+        else if (*array_begin == 'f') // 布尔类型，false
         {
             char tmp[6];
-            memcpy(tmp, array, 5);
+            memcpy(tmp, array_begin, 5);
             tmp[5] = 0;
             if (strcmp(tmp, "false") == 0)
                 insert(key, false);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 5;
+            array_begin += 5;
+            parser_array_check(array_begin, array_end);
         }
-        else if ((*array >= '0' && *array <= '9') || *array == '-') // 数字类型
+        else if ((*array_begin >= '0' && *array_begin <= '9') || *array_begin == '-') // 数字类型
         {
             string num;
-            if (*array == '-')
+            if (*array_begin == '-')
             {
                 num += '-';
-                array++;
+                array_begin++;
+                parser_array_check(array_begin, array_end);
             }
-            if (*array == '0') // 0开头
+            if (*array_begin == '0') // 0开头
             {
-                array++;
-                if (*array != '.' && (*array < '0' || *array > '9'))
+                array_begin++;
+                parser_array_check(array_begin, array_end);
+                if (*array_begin != '.' && (*array_begin < '0' || *array_begin > '9'))
                     insert(key, 0);
-                else if (*array == '.')
+                else if (*array_begin == '.')
                 {
                     num = "0.";
-                    array++;
+                    array_begin++;
+                    parser_array_check(array_begin, array_end);
                     bool flag = 0;
-                    while (*array >= '0' && *array <= '9')
+                    while (*array_begin >= '0' && *array_begin <= '9')
                     {
                         flag = 1;
-                        num += *array;
-                        array++;
+                        num += *array_begin;
+                        array_begin++;
+                        parser_array_check(array_begin, array_end);
                     }
                     if (!flag)
                     {
                         result = false;
-                        return array;
+                        return array_begin;
                     }
                     insert(key, stod(num));
                 }
             }
-            else if (*array >= '1' && *array <= '9') // 1-9开头
+            else if (*array_begin >= '1' && *array_begin <= '9') // 1-9开头
             {
                 ulong dot_cnt = 0; // 统计小数点个数
-                num += *array;
-                array++;
-                while ((*array >= '0' && *array <= '9') || *array == '.')
+                num += *array_begin;
+                array_begin++;
+                parser_array_check(array_begin, array_end);
+                while ((*array_begin >= '0' && *array_begin <= '9') || *array_begin == '.')
                 {
-                    if (*array == '.') dot_cnt++;
-                    num += *array;
-                    array++;
+                    if (*array_begin == '.') dot_cnt++;
+                    num += *array_begin;
+                    array_begin++;
+                    parser_array_check(array_begin, array_end);
                 }
                 if (dot_cnt > 1 || num.back() == '.')
                 {
                     result = false;
-                    return array;
+                    return array_begin;
                 }
                 if (dot_cnt == 1) // 有小数点，为浮点数
                     insert(key, stod(num));
@@ -662,39 +702,41 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
             else // 非数字开头，错误
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == '{') // json对象
+        else if (*array_begin == '{') // json对象
         {
             JsonObject jsobj;
             bool flag;
-            array = jsobj.parser_from_array(array, flag);
+            array_begin = jsobj.parser_from_array(array_begin, array_end, flag);
+            parser_array_check(array_begin, array_end);
             if (flag)
                 insert(key, jsobj);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == '[') // json数组
+        else if (*array_begin == '[') // json数组
         {
             JsonArray jsary;
             bool flag;
-            array = jsary.parser_from_array(array, flag);
+            array_begin = jsary.parser_from_array(array_begin, array_end, flag);
+            parser_array_check(array_begin, array_end);
             if (flag)
                 insert(key, jsary);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == 'n') // null
+        else if (*array_begin == 'n') // null
         {
             char tmp[5];
-            memcpy(tmp, array, 4);
+            memcpy(tmp, array_begin, 4);
             tmp[4] = 0;
             if (strcmp(tmp, "null") == 0)
             {
@@ -703,32 +745,38 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 4;
+            array_begin += 4;
+            parser_array_check(array_begin, array_end);
         }
         else // 格式错误
         {
             result = false;
-            return array;
+            return array_begin;
         }
         value_order++;
-        skip_space(array);
-        if (*array == '}')
-            break;
-        if (*array == ',')
+        if (!skip_space(array_begin, array_end))
         {
-            array++;
+            result = false;
+            return array_begin;
+        }
+        if (*array_begin == '}')
+            break;
+        if (*array_begin == ',')
+        {
+            array_begin++;
+            parser_array_check(array_begin, array_end);
             continue;
         }
         {
             result = false;
-            return array;
+            return array_begin;
         }
     }
-    array++;
+    array_begin++;
     result = true;
-    return array;
+    return array_begin;
 }
 
 void Shanhj_Json::JsonArray::insert(const string &value)
@@ -913,106 +961,129 @@ void Shanhj_Json::JsonArray::clear()
     v_string.clear();
 }
 
-char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
+char *Shanhj_Json::JsonArray::parser_from_array(char *array_begin, char *array_end, bool &result)
 {
-    ulong value_order = 0;
-    clear();
-    skip_space(array);
-    if (*array != '[')
+    if (array_begin >= array_end)
     {
         result = false;
-        return array;
+        return array_begin;
     }
-    array++;
-    while (1)
+    ulong value_order = 0;
+    clear();
+    if (!skip_space(array_begin, array_end))
     {
-        skip_space(array);
-        if (*array == '\"') // 字符串类型
+        result = false;
+        return array_begin;
+    }
+    if (*array_begin != '[')
+    {
+        result = false;
+        return array_begin;
+    }
+    array_begin++;
+    parser_array_check(array_begin, array_end);
+    while (array_begin < array_end)
+    {
+        if (!skip_space(array_begin, array_end))
         {
-            array++;
+            result = false;
+            return array_begin;
+        }
+        if (*array_begin == '\"') // 字符串类型
+        {
+            array_begin++;
+            parser_array_check(array_begin, array_end);
             string str;
-            if (!get_binary_from_text(array, str))
+            if (!get_binary_from_text(array_begin, array_end, str))
             {
                 result = false;
-                return array;
+                return array_begin;
             }
             insert(str);
         }
-        else if (*array == 't') // 布尔类型，true
+        else if (*array_begin == 't') // 布尔类型，true
         {
             char tmp[5];
-            memcpy(tmp, array, 4);
+            memcpy(tmp, array_begin, 4);
             tmp[4] = 0;
             if (strcmp(tmp, "true") == 0)
                 insert(true);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 4;
+            array_begin += 4;
+            parser_array_check(array_begin, array_end);
         }
-        else if (*array == 'f') // 布尔类型，false
+        else if (*array_begin == 'f') // 布尔类型，false
         {
             char tmp[6];
-            memcpy(tmp, array, 5);
+            memcpy(tmp, array_begin, 5);
             tmp[5] = 0;
             if (strcmp(tmp, "false") == 0)
                 insert(false);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 5;
+            array_begin += 5;
+            parser_array_check(array_begin, array_end);
         }
-        else if ((*array >= '0' && *array <= '9') || *array == '-') // 数字类型
+        else if ((*array_begin >= '0' && *array_begin <= '9') || *array_begin == '-') // 数字类型
         {
             string num;
-            if (*array == '-')
+            if (*array_begin == '-')
             {
                 num += '-';
-                array++;
+                array_begin++;
+                parser_array_check(array_begin, array_end);
             }
-            if (*array == '0') // 0开头
+            if (*array_begin == '0') // 0开头
             {
-                array++;
-                if (*array != '.' && (*array < '0' || *array > '9'))
+                array_begin++;
+                parser_array_check(array_begin, array_end);
+                if (*array_begin != '.' && (*array_begin < '0' || *array_begin > '9'))
                     insert(0);
-                else if (*array == '.')
+                else if (*array_begin == '.')
                 {
                     num = "0.";
-                    array++;
+                    array_begin++;
+                    parser_array_check(array_begin, array_end);
                     bool flag = 0;
-                    while (*array >= '0' && *array <= '9')
+                    while (*array_begin >= '0' && *array_begin <= '9')
                     {
                         flag = 1;
-                        num += *array;
-                        array++;
+                        num += *array_begin;
+                        array_begin++;
+                        parser_array_check(array_begin, array_end);
                     }
                     if (!flag)
                     {
                         result = false;
-                        return array;
+                        return array_begin;
                     }
                     insert(stod(num));
                 }
             }
-            else if (*array >= '1' && *array <= '9')
+            else if (*array_begin >= '1' && *array_begin <= '9')
             {
                 ulong dot_cnt = 0; // 统计小数点个数
-                num += *array;
-                array++;
-                while ((*array >= '0' && *array <= '9') || *array == '.')
+                num += *array_begin;
+                array_begin++;
+                parser_array_check(array_begin, array_end);
+                while ((*array_begin >= '0' && *array_begin <= '9') || *array_begin == '.')
                 {
-                    if (*array == '.') dot_cnt++;
-                    num += *array;
-                    array++;
+                    if (*array_begin == '.') dot_cnt++;
+                    num += *array_begin;
+                    array_begin++;
+                    parser_array_check(array_begin, array_end);
                 }
                 if (dot_cnt > 1 || num.back() == '.')
                 {
                     result = false;
-                    return array;
+                    return array_begin;
                 }
                 if (dot_cnt == 1) // 有小数点，为浮点数
                     insert(stod(num));
@@ -1022,39 +1093,41 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == '{') // json对象
+        else if (*array_begin == '{') // json对象
         {
             JsonObject jsobj;
             bool flag;
-            array = jsobj.parser_from_array(array, flag);
+            array_begin = jsobj.parser_from_array(array_begin, array_end, flag);
+            parser_array_check(array_begin, array_end);
             if (flag)
                 insert(jsobj);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == '[') // json数组
+        else if (*array_begin == '[') // json数组
         {
             JsonArray jsary;
             bool flag;
-            array = jsary.parser_from_array(array, flag);
+            array_begin = jsary.parser_from_array(array_begin, array_end, flag);
+            parser_array_check(array_begin, array_end);
             if (flag)
                 insert(jsary);
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
         }
-        else if (*array == 'n') // null
+        else if (*array_begin == 'n') // null
         {
             char tmp[5];
-            memcpy(tmp, array, 4);
+            memcpy(tmp, array_begin, 4);
             tmp[4] = 0;
             if (strcmp(tmp, "null") == 0)
             {
@@ -1063,32 +1136,38 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
             else
             {
                 result = false;
-                return array;
+                return array_begin;
             }
-            array += 4;
+            array_begin += 4;
+            parser_array_check(array_begin, array_end);
         }
-        else if (*array == ']' && value_order == 0)
+        else if (*array_begin == ']' && value_order == 0)
             break;
         else // 格式错误
         {
             result = false;
-            return array;
+            return array_begin;
         }
-        skip_space(array);
-        value_order++;
-        if (*array == ']')
-            break;
-        if (*array == ',')
+        if (!skip_space(array_begin, array_end))
         {
-            array++;
+            result = false;
+            return array_begin;
+        }
+        value_order++;
+        if (*array_begin == ']')
+            break;
+        if (*array_begin == ',')
+        {
+            array_begin++;
+            parser_array_check(array_begin, array_end);
             continue;
         }
         result = false;
-        return array;
+        return array_begin;
     }
-    array++;
+    array_begin++;
     result = true;
-    return array;
+    return array_begin;
 }
 
 Shanhj_Json::ulong Shanhj_Json::JsonArray::size()
