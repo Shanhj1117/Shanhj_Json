@@ -84,7 +84,7 @@ namespace Shanhj_Json
         bool get_int(ulong index, int64_t &result);
         bool get_double(ulong index, double &result);
         bool get_object(ulong index, JsonObject &result);
-        bool get_object(ulong index, JsonArray &result);
+        bool get_array(ulong index, JsonArray &result);
         // 清空所有值
         void clear();
         // 默认有4个空格的缩进，如果传入的indent<0则无缩进
@@ -118,13 +118,13 @@ namespace Shanhj_Json
     // begin为json序列开始的位置
     string error_position(char *begin, char *error_pos);
 
-    // 获取一个字符串，遇到"停止，如果合法返回true
-    // 自动处理转义字符，结束后array将指向"的后一个位置
-    bool get_binary_from_string(char *&array, string &result);
+    // 从带有转义字符的文本中获取一个二进制字符串，遇到 " 停止，如果合法返回true
+    // 自动处理转义字符，结束后array将指向 " 的后一个位置
+    bool get_binary_from_text(char *&array, string &result);
 
-    // 将二进制数据转成文本，特殊字符进行转义
+    // 将二进制字符串转成文本，特殊字符进行转义
     // 如果转换的内容不是utf-8格式，返回空字符串
-    string binary_to_string(const string &binary);
+    string binary_to_text(const string &binary);
 }
 
 void Shanhj_Json::skip_space(char *&array)
@@ -174,7 +174,7 @@ std::string Shanhj_Json::error_position(char *begin, char *error_pos)
     return "lines:" + to_string(line) + ",colum:" + to_string(column);
 }
 
-bool Shanhj_Json::get_binary_from_string(char *&array, string &result)
+bool Shanhj_Json::get_binary_from_text(char *&array, string &result)
 {
     while (*array != '\"')
     {
@@ -235,7 +235,7 @@ bool Shanhj_Json::get_binary_from_string(char *&array, string &result)
     return true;
 }
 
-std::string Shanhj_Json::binary_to_string(const string &binary)
+std::string Shanhj_Json::binary_to_text(const string &binary)
 {
     string result;
     for (int i = 0; i < binary.size(); i++)
@@ -488,14 +488,14 @@ std::string Shanhj_Json::JsonObject::output_to_string(long indent)
                     result += ' ';
             }
             result += '\"';
-            result += binary_to_string(entry.first);
+            result += binary_to_text(entry.first);
             result += "\":";
             if (indent >= 0) result += ' ';
             switch (entry.second.first)
             {
             case TYPE_STRING:
                 result += '\"';
-                result += binary_to_string(v_string[entry.second.second]);
+                result += binary_to_text(v_string[entry.second.second]);
                 result += '\"';
                 break;
             case TYPE_BOOLEAN:
@@ -553,7 +553,7 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
         }
         array++;
         string key; // 获取键值
-        if (!get_binary_from_string(array, key))
+        if (!get_binary_from_text(array, key))
         {
             result = false;
             return array;
@@ -571,7 +571,7 @@ char *Shanhj_Json::JsonObject::parser_from_array(char *array, bool &result)
         {
             array++;
             string str;
-            if (!get_binary_from_string(array, str))
+            if (!get_binary_from_text(array, str))
             {
                 result = false;
                 return array;
@@ -825,7 +825,7 @@ bool Shanhj_Json::JsonArray::get_object(ulong index, JsonObject &result)
     return true;
 }
 
-bool Shanhj_Json::JsonArray::get_object(ulong index, JsonArray &result)
+bool Shanhj_Json::JsonArray::get_array(ulong index, JsonArray &result)
 {
     if (index >= position.size()) return false;
     auto iter = position.begin();
@@ -867,7 +867,7 @@ std::string Shanhj_Json::JsonArray::output_to_string(long indent)
             {
             case TYPE_STRING:
                 result += '\"';
-                result += binary_to_string(v_string[entry.second]);
+                result += binary_to_text(v_string[entry.second]);
                 result += '\"';
                 break;
             case TYPE_BOOLEAN:
@@ -931,7 +931,7 @@ char *Shanhj_Json::JsonArray::parser_from_array(char *array, bool &result)
         {
             array++;
             string str;
-            if (!get_binary_from_string(array, str))
+            if (!get_binary_from_text(array, str))
             {
                 result = false;
                 return array;
